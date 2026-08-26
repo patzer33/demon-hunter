@@ -6,6 +6,8 @@ const CONFIG = {
   player: {
     speed: 220,
     maxHp: 100,
+    spriteScale: 4.5, // multiplicador visual do sprite do corpo (radius * spriteScale) — colisão continua em radius
+    walkFrameDuration: 0.15, // segundos que cada quadro de caminhada fica na tela
   },
   enemy: {
     radius: 18,
@@ -20,6 +22,7 @@ const CONFIG = {
     regenPerSecond: 8,           // HP recuperado por segundo na regeneração normal
     scoreValue: 100,
     color: '#8b5cf6',
+    spriteScale: 3.5, // multiplicador visual do sprite (radius * spriteScale) — colisão continua em radius
   },
   pistol: {
     magazineSize: 12,
@@ -48,6 +51,7 @@ const CONFIG = {
     regenPerSecond: 6,
     scoreValue: 75,
     color: '#f97316',
+    spriteScale: 3.5, // multiplicador visual do sprite (radius * spriteScale) — colisão continua em radius
   },
   // Inimigo pesado: muita vida, baixa velocidade, dano alto, regenera mais rápido/eficiente.
   enemyHeavy: {
@@ -63,6 +67,7 @@ const CONFIG = {
     regenPerSecond: 14, // regenera mais HP por segundo que o comum
     scoreValue: 250,
     color: '#5b21b6',
+    spriteScale: 5.0, // maior que os outros tipos — reforça visualmente que é mais forte/ameaçador
   },
   mark: {
     levels: [
@@ -71,15 +76,26 @@ const CONFIG = {
     ],
   },
   spawn: {
-    maxEnemies: 3,     // quantidade máxima de inimigos vivos ao mesmo tempo (protótipo, sem ondas ainda)
-    spawnInterval: 4.0, // segundos entre cada tentativa de spawn
     edgeMargin: 40,     // quão longe da borda visível o inimigo nasce
+    spawnInterval: 1.0, // segundos entre cada inimigo nascendo, enquanto a onda ainda tem inimigos pra nascer
     // Peso relativo de cada tipo ao sortear o próximo spawn (maior peso = mais comum).
     types: [
       { type: 'normal', weight: 3 },
       { type: 'fast', weight: 2 },
       { type: 'heavy', weight: 1 },
     ],
+  },
+  waves: {
+    startingEnemies: 8,   // quantidade total de inimigos na onda 1
+    enemiesIncrease: 4,   // quantos inimigos a mais a cada onda nova (progressão linear e configurável)
+    startingMaxSimultaneous: 3, // teto de inimigos vivos ao mesmo tempo na onda 1
+    maxSimultaneousIncreasePerWave: 0.5, // aumento do teto por onda (arredondado pra baixo)
+    maxSimultaneousCap: 8, // teto nunca passa disso, mesmo em ondas avançadas
+    transitionTime: 2.0,  // segundos de pausa mostrando "ONDA X" antes da próxima começar
+  },
+  waveClearBonus: {
+    healthAmount: 30, // HP recuperado ao concluir uma onda
+    ammoAmount: 24,   // munição adicionada à reserva ao concluir uma onda
   },
 };
 
@@ -96,8 +112,17 @@ const Game = {
   score: 0,
   wave: 1,
   gameOver: false,
+  paused: false,
 
   spawnTimer: 0,
+
+  // Estado do sistema de ondas.
+  waveEnemiesTotal: 0,     // quantos inimigos essa onda precisa spawnar no total
+  waveEnemiesSpawned: 0,   // quantos já nasceram até agora
+  waveMaxSimultaneous: 0,  // teto de inimigos vivos ao mesmo tempo, nessa onda
+  waveInTransition: false, // true durante a pausa entre uma onda e a próxima
+  waveTransitionTimer: 0,
+  waveMessage: '',
 
   init(canvas) {
     this.canvas = canvas;
@@ -106,18 +131,47 @@ const Game = {
     this.height = canvas.height;
 
     this.player = new Player(this.width / 2, this.height / 2);
-    this.enemies = [new Enemy(150, 150)];
+    this.enemies = [];
     this.bullets = [];
     this.score = 0;
     this.gameOver = false;
-    this.spawnTimer = CONFIG.spawn.spawnInterval;
+    this.paused = false;
+
+    this.startWave(1);
   },
+
+  // Reinicia a partida do zero (chamado ao apertar R na tela de Game Over).
   restart() {
     this.init(this.canvas);
-},
+  },
+
+  // Calcula quantos inimigos e qual o teto simultâneo para uma dada onda, a partir do CONFIG.
+  computeWaveParams(waveNumber) {
+    const w = CONFIG.waves;
+    const total = w.startingEnemies + w.enemiesIncrease * (waveNumber - 1);
+    const maxSimultaneous = Math.min(
+      w.maxSimultaneousCap,
+      w.startingMaxSimultaneous + Math.floor(w.maxSimultaneousIncreasePerWave * (waveNumber - 1))
+    );
+    return { total, maxSimultaneous };
+  },
+
+  // Prepara o estado para a onda indicada e libera o spawn imediatamente.
+  startWave(waveNumber) {
+    this.wave = waveNumber;
+
+    const params = this.computeWaveParams(waveNumber);
+    this.waveEnemiesTotal = params.total;
+    this.waveMaxSimultaneous = params.maxSimultaneous;
+    this.waveEnemiesSpawned = 0;
+    this.spawnTimer = 0;
+
+    this.waveInTransition = false;
+    this.waveMessage = '';
+  },
 
   update(dt, input, mouseWorld) {
-    if (this.gameOver) return;
+    if (this.gameOver || this.paused) return;
 
     this.player.update(dt, input, mouseWorld, this.width, this.height);
 
@@ -136,23 +190,50 @@ const Game = {
       return e.alive;
     });
 
-    this.updateSpawning(dt);
+    if (this.waveInTransition) {
+      this.waveTransitionTimer -= dt;
+      if (this.waveTransitionTimer <= 0) {
+        this.startWave(this.wave + 1);
+      }
+    } else {
+      this.updateSpawning(dt);
+      this.checkWaveCleared();
+    }
 
-    if (!this.player.alive) this.gameOver = true;
+    if (!this.player.alive && !this.gameOver) {
+      this.gameOver = true;
+      Menu.recordScore(this.score);
+    }
 
     this.updateHUD();
   },
 
-  // Sistema básico de spawn: mantém inimigos nascendo nas bordas até o teto configurado.
-  // Ainda não é o sistema de ondas — só garante múltiplos inimigos simultâneos.
+  // Uma onda termina quando todos os inimigos previstos já nasceram e nenhum está mais vivo.
+  // Ao concluir, o jogador recebe uma recompensa fixa de vida e munição antes da próxima começar.
+  checkWaveCleared() {
+    if (this.waveEnemiesSpawned >= this.waveEnemiesTotal && this.enemies.length === 0) {
+      this.waveInTransition = true;
+      this.waveTransitionTimer = CONFIG.waves.transitionTime;
+      this.waveMessage = `ONDA ${this.wave + 1} COMEÇANDO...`;
+
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + CONFIG.waveClearBonus.healthAmount);
+      this.player.pistol.reserve += CONFIG.waveClearBonus.ammoAmount;
+    }
+  },
+
+  // Spawna inimigos nas bordas até completar o total previsto para a onda atual,
+  // respeitando o teto de inimigos simultâneos.
   updateSpawning(dt) {
+    if (this.waveEnemiesSpawned >= this.waveEnemiesTotal) return;
+
     this.spawnTimer -= dt;
 
     if (this.spawnTimer <= 0) {
       this.spawnTimer = CONFIG.spawn.spawnInterval;
 
-      if (this.enemies.length < CONFIG.spawn.maxEnemies) {
+      if (this.enemies.length < this.waveMaxSimultaneous) {
         this.spawnEnemy();
+        this.waveEnemiesSpawned++;
       }
     }
   },
@@ -228,13 +309,34 @@ const Game = {
     for (const bullet of this.bullets) bullet.draw(ctx);
     this.player.draw(ctx);
 
-    if (this.gameOver) {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-      ctx.fillRect(0, 0, this.width, this.height);
+    if (this.waveInTransition) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(0, this.height / 2 - 45, this.width, 70);
 
       ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText(this.waveMessage, this.width / 2, this.height / 2 + 5);
+    }
+
+    if (this.paused) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+      ctx.fillRect(0, 0, this.width, this.height);
+
       ctx.textAlign = 'center';
-      ctx.font = '48px sans-serif';
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 48px sans-serif';
+      ctx.fillText('PAUSADO', this.width / 2, this.height / 2 - 30);
+
+      ctx.font = '22px sans-serif';
+      ctx.fillText('Pressione ESC para continuar', this.width / 2, this.height / 2 + 15);
+
+      ctx.fillStyle = '#d1d5db';
+      ctx.fillText('Pressione R para reiniciar', this.width / 2, this.height / 2 + 45);
+    }
+
+    if (this.gameOver) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
       ctx.fillRect(0, 0, this.width, this.height);
 
@@ -242,26 +344,13 @@ const Game = {
 
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 56px sans-serif';
-      ctx.fillText(
-          'VOCÊ MORREU',
-          this.width / 2,
-          this.height / 2 - 45
-      );
+      ctx.fillText('VOCÊ MORREU', this.width / 2, this.height / 2 - 45);
 
       ctx.font = '24px sans-serif';
-      ctx.fillText(
-          `PONTOS: ${this.score}`,
-          this.width / 2,
-          this.height / 2 + 5
-      );
+      ctx.fillText(`PONTOS: ${this.score}`, this.width / 2, this.height / 2 + 5);
 
-      ctx.font = '20px sans-serif';
       ctx.fillStyle = '#d1d5db';
-      ctx.fillText(
-          'Pressione R para jogar novamente',
-          this.width / 2,
-          this.height / 2 + 55
-      );
+      ctx.fillText('Pressione R para jogar novamente', this.width / 2, this.height / 2 + 55);
     }
   },
 

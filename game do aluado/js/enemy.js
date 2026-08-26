@@ -1,3 +1,21 @@
+// Sprites dos inimigos, um por tipo. Carregados uma única vez e compartilhados entre todas
+// as instâncias do mesmo tipo (evita recarregar a imagem a cada spawn).
+const ENEMY_SPRITE_PATHS = {
+  normal: 'assets/images/enemy_normal.png',
+  fast: 'assets/images/enemy_fast.png',
+  heavy: 'assets/images/enemy_heavy.png',
+};
+const enemySpriteCache = {};
+
+function getEnemySprite(type) {
+  if (!enemySpriteCache[type]) {
+    const img = new Image();
+    img.src = ENEMY_SPRITE_PATHS[type] || ENEMY_SPRITE_PATHS.normal;
+    enemySpriteCache[type] = img;
+  }
+  return enemySpriteCache[type];
+}
+
 class Enemy {
   constructor(x, y, type = 'normal') {
     const stats = Enemy.getStatsForType(type);
@@ -8,6 +26,9 @@ class Enemy {
     this.radius = stats.radius;
     this.color = stats.color;
     this.scoreValue = stats.scoreValue;
+    this.sprite = getEnemySprite(type);
+    this.spriteScale = stats.spriteScale;
+    this.facingLeft = false; // usado pra espelhar o sprite quando anda pra esquerda
 
     this.maxHp = stats.maxHp;
     this.hp = this.maxHp;
@@ -54,6 +75,9 @@ class Enemy {
       this.x += nx * this.speed * dt;
       this.y += ny * this.speed * dt;
     }
+
+    // Guarda a direção horizontal (pra espelhar o sprite quando o inimigo anda pra esquerda).
+    if (dx !== 0) this.facingLeft = dx < 0;
 
     if (this.attackTimer > 0) this.attackTimer -= dt;
     if (dist <= this.attackRange && this.attackTimer <= 0) {
@@ -143,11 +167,26 @@ class Enemy {
       ctx.stroke();
     }
 
-    // Corpo
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-    ctx.fillStyle = this.color;
-    ctx.fill();
+    // Corpo — usa o sprite do tipo se já tiver carregado; senão, o círculo colorido de sempre.
+    if (this.sprite.complete && this.sprite.naturalWidth > 0) {
+      const size = this.radius * this.spriteScale;
+
+      if (this.facingLeft) {
+        // Espelha horizontalmente (o sprite nasceu olhando/andando pra direita).
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.scale(-1, 1);
+        ctx.drawImage(this.sprite, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.drawImage(this.sprite, this.x - size / 2, this.y - size / 2, size, size);
+      }
+    } else {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fillStyle = this.color;
+      ctx.fill();
+    }
 
     // Barra de vida
     const barWidth = 40;

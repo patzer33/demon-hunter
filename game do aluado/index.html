@@ -8,7 +8,7 @@
 <body>
   <div id="game-container">
     <canvas id="gameCanvas" width="1280" height="800"></canvas>
-    <div id="hud">
+    <div id="hud" style="display: none;">
       <div id="hp">HP: 100/100</div>
       <div id="weapon">ARMA: PISTOLA</div>
       <div id="ammo">PISTOLA: 12/12</div>
@@ -16,12 +16,13 @@
       <div id="wave">ONDA: 1</div>
       <div id="score">PONTOS: 0</div>
     </div>
-    <div id="controls">
+    <div id="controls" style="display: none;">
       WASD move · Mouse mira · Clique ataca · 1 Pistola · 2 Katana · R Recarregar
     </div>
   </div>
 
-  <!-- Ordem importa: bullet e weapon antes de player (que os usa) -->
+  <!-- Ordem importa: menu antes de game (que chama Menu.recordScore); bullet/weapon antes de player -->
+  <script src="js/menu.js"></script>
   <script src="js/bullet.js"></script>
   <script src="js/weapon.js"></script>
   <script src="js/player.js"></script>
