@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Caçador — Protótipo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="gameCanvas" width="1280" height="800"></canvas>
+    <div id="hud" style="display: none;">
+      <div id="hp"><img src="assets/images/ui/heart.png" class="hud-heart" alt=""> <span id="hp-value">100/100</span></div>
+      <div id="weapon">ARMA: PISTOLA</div>
+      <div id="ammo"><img src="assets/images/weapons/bullet.png" class="hud-bullet" alt=""> MUNIÇÃO: <span id="ammo-value">12/12</span></div>
+      <div id="reserve">RESERVA: 36</div>
+      <div id="wave">ONDA: 1</div>
+      <div id="score">PONTOS: 0</div>
+    </div>
+    <div id="controls" style="display: none;">
+      WASD move · Mouse mira · Clique ataca · 1 Pistola · 2 Katana · R Recarregar
+    </div>
+  </div>
+
+  <!-- Ordem importa: audio/menu antes de game (que os usa); bullet/weapon antes de player -->
+  <script src="js/audio.js"></script>
+  <script src="js/menu.js"></script>
+  <script src="js/bullet.js"></script>
+  <script src="js/weapon.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/enemy.js"></script>
+  <script src="js/boss.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
